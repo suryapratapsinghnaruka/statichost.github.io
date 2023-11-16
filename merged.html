@@ -1,0 +1,2395 @@
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <title>PDF Manipulation</title>
+    <style>
+        #pdfCanvas {
+            border: 2px solid black;
+        }
+        #selection-box {
+            border: 2px dashed red;
+            position: absolute;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF Manipulation</h1>
+    
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="pdfFile" id="pdfInput" accept=".pdf">
+        <button type="submit">Upload</button>
+    </form>
+
+    <canvas id="pdfCanvas"></canvas>
+    <button id="rotateLeftButton">Rotate Left</button>
+    <button id="rotateRightButton">Rotate Right</button>
+    <button id="cropButton">Crop PDF</button>
+    <div id="selection-box"></div>
+    <a id="downloadButton" style="display: none;" download="cropped.pdf" href="#"><button>Download Cropped PDF</button></a>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/1.3.2/jspdf.debug.js"></script>
+    <script>
+        const pdfInput = document.getElementById('pdfInput');
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const cropButton = document.getElementById('cropButton');
+        const rotateLeftButton = document.getElementById('rotateLeftButton');
+        const rotateRightButton = document.getElementById('rotateRightButton');
+        const selectionBox = document.getElementById('selection-box');
+        const downloadButton = document.getElementById('downloadButton');
+        const ctx = pdfCanvas.getContext('2d');
+        let pdfFile = null;
+        
+        let isSelecting = false;
+        let isCropping = false;
+        let startX, startY, endX, endY;
+        let pdfBuffer = null;
+        let currentRotation = 0;
+
+        // Listen for the user's choice (Rotate or Crop)
+        rotateLeftButton.addEventListener('click', () => {
+            rotatePDF(-90);
+        });
+
+        rotateRightButton.addEventListener('click', () => {
+            rotatePDF(90);
+        });
+
+        cropButton.addEventListener('click', () => {
+            startCrop();
+        });
+
+        pdfInput.addEventListener('change', handleFileSelect);
+
+        pdfCanvas.addEventListener('mousedown', (e) => {
+            if (isCropping && !isSelecting) {
+                isSelecting = true;
+                const rect = pdfCanvas.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+                selectionBox.style.left = startX + 'px';
+                selectionBox.style.top = startY + 'px';
+                selectionBox.style.width = '0px';
+                selectionBox.style.height = '0px';
+            }
+        });
+
+        pdfCanvas.addEventListener('mousemove', (e) => {
+            if (isCropping && isSelecting) {
+                const rect = pdfCanvas.getBoundingClientRect();
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+                selectionBox.style.width = (endX - startX) + 'px';
+                selectionBox.style.height = (endY - startY) + 'px';
+            }
+        });
+
+        pdfCanvas.addEventListener('mouseup', () => {
+            if (isCropping && isSelecting) {
+                isSelecting = false;
+                handleCropSelection();
+            }
+        });
+
+        function handleFileSelect(event) {
+            pdfFile = event.target.files[0];
+            const reader = new FileReader();
+        
+            reader.onload = function(e) {
+                pdfBuffer = new Uint8Array(e.target.result);
+                renderPDF(pdfBuffer);
+            };
+        
+            reader.readAsArrayBuffer(pdfFile);
+        }
+
+        function renderPDF(data) {
+            pdfjsLib.getDocument(data).promise.then(pdf => {
+                pdf.getPage(1).then(page => {
+                    const scale = 1.5;
+                    const viewport = page.getViewport({ scale });
+        
+                    pdfCanvas.width = viewport.width;
+                    pdfCanvas.height = viewport.height;
+        
+                    const renderContext = {
+                        canvasContext: ctx,
+                        viewport: viewport
+                    };
+        
+                    page.render(renderContext);
+                });
+            });
+        }
+
+        function rotatePDF(degrees) {
+            if (!pdfBuffer) {
+                alert('No PDF loaded.');
+                return;
+            }
+
+            currentRotation += degrees;
+            if (currentRotation < 0) currentRotation += 360;
+            if (currentRotation >= 360) currentRotation -= 360;
+
+            ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+
+            pdfCanvas.width = pdfCanvas.width;
+            ctx.save();
+            ctx.translate(pdfCanvas.width / 2, pdfCanvas.height / 2);
+            ctx.rotate(currentRotation * (Math.PI / 180));
+            ctx.drawImage(pdfCanvas, -pdfCanvas.width / 2, -pdfCanvas.height / 2);
+            ctx.restore();
+        }
+
+        function startCrop() {
+            isCropping = true;
+        }
+
+        function handleCropSelection() {
+            const x = startX;
+            const y = startY;
+            const width = endX - startX;
+            const height = endY - startY;
+
+            // Create a new canvas for the cropped area
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext('2d');
+
+            // Draw the cropped area from the original PDF canvas
+            context.drawImage(pdfCanvas, x, y, width, height, 0, 0, width, height);
+
+            // Convert the cropped canvas to a data URL
+            const croppedDataURL = canvas.toDataURL('image/jpeg');
+
+            // Create a new jsPDF instance for the cropped PDF
+            const croppedPDF = new jsPDF('p', 'pt', [width, height]);
+
+            // Add the cropped image to the jsPDF document
+            croppedPDF.addImage(croppedDataURL, 'JPEG', 0, 0, width, height);
+
+            // Generate the cropped PDF as a data URI
+            const croppedPdfDataUri = croppedPDF.output('datauristring');
+
+            // Update the PDF canvas with the cropped content
+            const croppedImage = new Image();
+            croppedImage.src = croppedPdfDataUri;
+            croppedImage.onload = function () {
+                pdfCanvas.width = width;
+                pdfCanvas.height = height;
+                ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+                ctx.drawImage(croppedImage, 0, 0, width, height);
+            };
+
+            // Show the download button for the cropped PDF
+            downloadButton.href = croppedPdfDataUri;
+            downloadButton.style.display = 'block';
+        }
+    </script>
+</body>
+</html> -->
+
+
+
+<!-- // this is working fine niche vla  -->
+
+
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <title>PDF Manipulation</title>
+    <style>
+        #pdfCanvas {
+            border: 2px solid black;
+        }
+        #selection-box {
+            border: 2px dashed red;
+            position: absolute;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF Manipulation</h1>
+    
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="pdfFile" id="pdfInput" accept=".pdf">
+        <button type="submit">Upload</button>
+    </form>
+
+    <canvas id="pdfCanvas"></canvas>
+    <button id="rotateLeftButton">Rotate Left</button>
+    <button id="rotateRightButton">Rotate Right</button>
+    <button id="cropButton">Crop PDF</button>
+    <div id="selection-box"></div>
+    <a id="downloadButton" style="display: none;" download="cropped.pdf" href="#"><button>Download Cropped PDF</button></a>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/1.3.2/jspdf.debug.js"></script>
+    <script>
+        const pdfInput = document.getElementById('pdfInput');
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const cropButton = document.getElementById('cropButton');
+        const rotateLeftButton = document.getElementById('rotateLeftButton');
+        const rotateRightButton = document.getElementById('rotateRightButton');
+        const selectionBox = document.getElementById('selection-box');
+        const downloadButton = document.getElementById('downloadButton');
+        const ctx = pdfCanvas.getContext('2d');
+        let pdfFile = null;
+        
+        let isSelecting = false;
+        let isCropping = false;
+        let startX, startY, endX, endY;
+        let pdfBuffer = null;
+        let currentRotation = 0;
+
+        // Listen for the user's choice (Rotate or Crop)
+        rotateLeftButton.addEventListener('click', () => {
+            rotatePDF(-90);
+        });
+
+        rotateRightButton.addEventListener('click', () => {
+            rotatePDF(90);
+        });
+
+        cropButton.addEventListener('click', () => {
+            startCrop();
+        });
+
+        pdfInput.addEventListener('change', handleFileSelect);
+
+        pdfCanvas.addEventListener('mousedown', (e) => {
+            if (isCropping && !isSelecting) {
+                isSelecting = true;
+                const rect = pdfCanvas.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+                selectionBox.style.left = startX + 'px';
+                selectionBox.style.top = startY + 'px';
+                selectionBox.style.width = '0px';
+                selectionBox.style.height = '0px';
+                selectionBox.style.display = 'block'; // Ensure the selection box is displayed
+            }
+        });
+
+        pdfCanvas.addEventListener('mousemove', (e) => {
+            if (isCropping && isSelecting) {
+                const rect = pdfCanvas.getBoundingClientRect();
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+                selectionBox.style.width = (endX - startX) + 'px';
+                selectionBox.style.height = (endY - startY) + 'px';
+            }
+        });
+
+        pdfCanvas.addEventListener('mouseup', () => {
+            if (isCropping && isSelecting) {
+                isSelecting = false;
+                handleCropSelection();
+            }
+        });
+
+        function handleFileSelect(event) {
+            pdfFile = event.target.files[0];
+            const reader = new FileReader();
+        
+            reader.onload = function(e) {
+                pdfBuffer = new Uint8Array(e.target.result);
+                renderPDF(pdfBuffer);
+            };
+        
+            reader.readAsArrayBuffer(pdfFile);
+        }
+
+        function renderPDF(data) {
+            pdfjsLib.getDocument(data).promise.then(pdf => {
+                pdf.getPage(1).then(page => {
+                    const scale = 1.5;
+                    const viewport = page.getViewport({ scale });
+        
+                    pdfCanvas.width = viewport.width;
+                    pdfCanvas.height = viewport.height;
+        
+                    const renderContext = {
+                        canvasContext: ctx,
+                        viewport: viewport
+                    };
+        
+                    page.render(renderContext);
+                });
+            });
+        }
+
+        function rotatePDF(degrees) {
+            if (!pdfBuffer) {
+                alert('No PDF loaded.');
+                return;
+            }
+
+            currentRotation += degrees;
+            if (currentRotation < 0) currentRotation += 360;
+            if (currentRotation >= 360) currentRotation -= 360;
+
+            ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+
+            pdfCanvas.width = pdfCanvas.width;
+            ctx.save();
+            ctx.translate(pdfCanvas.width / 2, pdfCanvas.height / 2);
+            ctx.rotate(currentRotation * (Math.PI / 180));
+            ctx.drawImage(pdfCanvas, -pdfCanvas.width / 2, -pdfCanvas.height / 2);
+            ctx.restore();
+        }
+
+        function startCrop() {
+            isCropping = true;
+        }
+
+        function handleCropSelection() {
+            const x = startX;
+            const y = startY;
+            const width = endX - startX;
+            const height = endY - startY;
+
+            // Create a new canvas for the cropped area
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext('2d');
+
+            // Draw the cropped area from the original PDF canvas
+            context.drawImage(pdfCanvas, x, y, width, height, 0, 0, width, height);
+
+            // Convert the cropped canvas to a data URL
+            const croppedDataURL = canvas.toDataURL('image/jpeg');
+
+            // Create a new jsPDF instance for the cropped PDF
+            const croppedPDF = new jsPDF('p', 'pt', [width, height]);
+
+            // Add the cropped image to the jsPDF document
+            croppedPDF.addImage(croppedDataURL, 'JPEG', 0, 0, width, height);
+
+            // Generate the cropped PDF as a data URI
+            const croppedPdfDataUri = croppedPDF.output('datauristring');
+
+            // Update the PDF canvas with the cropped content
+            const croppedImage = new Image();
+            croppedImage.src = croppedPdfDataUri;
+            croppedImage.onload = function () {
+                pdfCanvas.width = width;
+                pdfCanvas.height = height;
+                ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+                ctx.drawImage(croppedImage, 0, 0, width, height);
+            };
+
+            // Show the download button for the cropped PDF
+            downloadButton.href = croppedPdfDataUri;
+            downloadButton.style.display = 'block';
+        }
+    </script>
+</body>
+</html> -->
+
+
+
+
+
+
+<!-- more enhanced code niche vala-->
+
+
+
+
+
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <title>PDF Manipulation</title>
+    <style>
+        #pdfCanvas {
+            border: 2px solid black;
+        }
+        #selection-box {
+            border: 2px dashed red;
+            position: absolute;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF Manipulation</h1>
+    
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="pdfFile" id="pdfInput" accept=".pdf">
+        <button type="submit">Upload</button>
+    </form>
+
+    <canvas id="pdfCanvas"></canvas>
+    <button id="rotateLeftButton">Rotate Left</button>
+    <button id="rotateRightButton">Rotate Right</button>
+    <button id="cropButton">Crop PDF</button>
+    <div id="selection-box"></div>
+    <a id="downloadButton" style="display: none;" download="cropped.pdf" href="#"><button>Download Cropped PDF</button></a>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/1.3.2/jspdf.debug.js"></script>
+    <script>
+        const pdfInput = document.getElementById('pdfInput');
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const cropButton = document.getElementById('cropButton');
+        const rotateLeftButton = document.getElementById('rotateLeftButton');
+        const rotateRightButton = document.getElementById('rotateRightButton');
+        const selectionBox = document.getElementById('selection-box');
+        const downloadButton = document.getElementById('downloadButton');
+        const ctx = pdfCanvas.getContext('2d');
+        let pdfFile = null;
+        
+        let isSelecting = false;
+        let isCropping = false;
+        let startX, startY, endX, endY;
+        let pdfBuffer = null;
+        let currentRotation = 0;
+
+        // Listen for the user's choice (Rotate or Crop)
+        rotateLeftButton.addEventListener('click', () => {
+            rotatePDF(-90);
+        });
+
+        rotateRightButton.addEventListener('click', () => {
+            rotatePDF(90);
+        });
+
+        cropButton.addEventListener('click', () => {
+            startCrop();
+        });
+
+        pdfInput.addEventListener('change', handleFileSelect);
+
+        pdfCanvas.addEventListener('mousedown', (e) => {
+            if (isCropping && !isSelecting) {
+                isSelecting = true;
+                const rect = pdfCanvas.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+                selectionBox.style.left = startX + 'px';
+                selectionBox.style.top = startY + 'px';
+                selectionBox.style.width = '0px';
+                selectionBox.style.height = '0px';
+                selectionBox.style.display = 'block'; // Ensure the selection box is displayed
+            }
+        });
+
+        pdfCanvas.addEventListener('mousemove', (e) => {
+            if (isCropping && isSelecting) {
+                const rect = pdfCanvas.getBoundingClientRect();
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+                selectionBox.style.width = (endX - startX) + 'px';
+                selectionBox.style.height = (endY - startY) + 'px';
+            }
+        });
+
+        pdfCanvas.addEventListener('mouseup', () => {
+            if (isCropping && isSelecting) {
+                isSelecting = false;
+                handleCropSelection();
+            }
+        });
+
+        function handleFileSelect(event) {
+            pdfFile = event.target.files[0];
+            const reader = new FileReader();
+        
+            reader.onload = function(e) {
+                pdfBuffer = new Uint8Array(e.target.result);
+                renderPDF(pdfBuffer);
+            };
+        
+            reader.readAsArrayBuffer(pdfFile);
+        }
+
+        function renderPDF(data) {
+            pdfjsLib.getDocument(data).promise.then(pdf => {
+                pdf.getPage(1).then(page => {
+                    const scale = 1.5;
+                    const viewport = page.getViewport({ scale });
+
+                    // Clear the canvas before rendering
+                    ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+        
+                    pdfCanvas.width = viewport.width;
+                    pdfCanvas.height = viewport.height;
+
+                    // Apply the current rotation
+                    ctx.save();
+                    ctx.translate(pdfCanvas.width / 2, pdfCanvas.height / 2);
+                    ctx.rotate(currentRotation * (Math.PI / 180));
+                    ctx.drawImage(pdfCanvas, -pdfCanvas.width / 2, -pdfCanvas.height / 2);
+                    ctx.restore();
+
+                    const renderContext = {
+                        canvasContext: ctx,
+                        viewport: viewport
+                    };
+        
+                    page.render(renderContext);
+                });
+            });
+        }
+
+        function rotatePDF(degrees) {
+            if (!pdfBuffer) {
+                alert('No PDF loaded.');
+                return;
+            }
+
+            currentRotation += degrees;
+            if (currentRotation < 0) currentRotation += 360;
+            if (currentRotation >= 360) currentRotation -= 360;
+
+            renderPDF(pdfBuffer); // Reload the PDF with the updated rotation
+        }
+
+        function startCrop() {
+            isCropping = true;
+        }
+
+        function handleCropSelection() {
+            const x = startX;
+            const y = startY;
+            const width = endX - startX;
+            const height = endY - startY;
+
+            // Create a new canvas for the cropped area
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext('2d');
+
+            // Draw the cropped area from the original PDF canvas
+            context.drawImage(pdfCanvas, x, y, width, height, 0, 0, width, height);
+
+            // Convert the cropped canvas to a data URL
+            const croppedDataURL = canvas.toDataURL('image/jpeg');
+
+            // Create a new jsPDF instance for the cropped PDF
+            const croppedPDF = new jsPDF('p', 'pt', [width, height]);
+
+            // Add the cropped image to the jsPDF document
+            croppedPDF.addImage(croppedDataURL, 'JPEG', 0, 0, width, height);
+
+            // Generate the cropped PDF as a data URI
+            const croppedPdfDataUri = croppedPDF.output('datauristring');
+
+            // Update the PDF canvas with the cropped content
+            const croppedImage = new Image();
+            croppedImage.src = croppedPdfDataUri;
+            croppedImage.onload = function () {
+                pdfCanvas.width = width;
+                pdfCanvas.height = height;
+                ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+                ctx.drawImage(croppedImage, 0, 0, width, height);
+            };
+
+            // Show the download button for the cropped PDF
+            downloadButton.href = croppedPdfDataUri;
+            downloadButton.style.display = 'block';
+        }
+    </script>
+</body>
+</html> -->
+
+
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <title>PDF Manipulation</title>
+    <style>
+        #pdfCanvas {
+            border: 2px solid black;
+        }
+        #selection-box {
+            border: 2px dashed red;
+            position: absolute;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF Manipulation</h1>
+    
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="pdfFile" id="pdfInput" accept=".pdf">
+        <button type="submit">Upload</button>
+    </form>
+
+    <canvas id="pdfCanvas"></canvas>
+    <button id="rotateLeftButton">Rotate Left</button>
+    <button id="rotateRightButton">Rotate Right</button>
+    <button id="cropButton">Crop PDF</button>
+    <div id="selection-box"></div>
+    <a id="downloadButton" style="display: none;" download="cropped.pdf" href="#"><button>Download Cropped PDF</button></a>
+    <a id="downloadRotatedButton" style="display: none;" download="rotated.pdf" href="#"><button>Download Rotated PDF</button></a>
+
+
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/1.3.2/jspdf.debug.js"></script>
+    <script>
+        const pdfInput = document.getElementById('pdfInput');
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const cropButton = document.getElementById('cropButton');
+        const rotateLeftButton = document.getElementById('rotateLeftButton');
+        const rotateRightButton = document.getElementById('rotateRightButton');
+        const selectionBox = document.getElementById('selection-box');
+        const downloadButton = document.getElementById('downloadButton');
+        const downloadRotatedButton = document.getElementById('downloadRotatedButton');
+        const ctx = pdfCanvas.getContext('2d');
+        let pdfFile = null;
+        
+        let isSelecting = false;
+        let isCropping = false;
+        let startX, startY, endX, endY;
+        let pdfBuffer = null;
+        let currentRotation = 0;
+
+        // Listen for the user's choice (Rotate or Crop)
+        rotateLeftButton.addEventListener('click', () => {
+    currentRotation -= 90;
+    if (currentRotation < 0) currentRotation = 270;
+    renderPDF(pdfBuffer, currentRotation);
+});
+
+rotateRightButton.addEventListener('click', () => {
+    currentRotation += 90;
+    if (currentRotation >= 360) currentRotation = 0;
+    renderPDF(pdfBuffer, currentRotation);
+});
+
+        cropButton.addEventListener('click', () => {
+            startCrop();
+        });
+
+        pdfInput.addEventListener('change', handleFileSelect);
+
+        pdfCanvas.addEventListener('mousedown', (e) => {
+            if (isCropping && !isSelecting) {
+                isSelecting = true;
+                const rect = pdfCanvas.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+                selectionBox.style.left = startX + 'px';
+                selectionBox.style.top = startY + 'px';
+                selectionBox.style.width = '0px';
+                selectionBox.style.height = '0px';
+                selectionBox.style.display = 'block'; // Ensure the selection box is displayed
+            }
+        });
+
+        pdfCanvas.addEventListener('mousemove', (e) => {
+            if (isCropping && isSelecting) {
+                const rect = pdfCanvas.getBoundingClientRect();
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+                selectionBox.style.width = (endX - startX) + 'px';
+                selectionBox.style.height = (endY - startY) + 'px';
+            }
+        });
+
+        pdfCanvas.addEventListener('mouseup', () => {
+            if (isCropping && isSelecting) {
+                isSelecting = false;
+                handleCropSelection();
+            }
+        });
+
+        function handleFileSelect(event) {
+            pdfFile = event.target.files[0];
+            const reader = new FileReader();
+        
+            reader.onload = function(e) {
+                pdfBuffer = new Uint8Array(e.target.result);
+                renderPDF(pdfBuffer, currentRotation);
+            };
+        
+            reader.readAsArrayBuffer(pdfFile);
+        }
+
+        function rotatePDF(degrees) {
+    if (!pdfBuffer) {
+        alert('No PDF loaded.');
+        return;
+    }
+
+    // Update the currentRotation
+    currentRotation += degrees;
+    if (currentRotation < 0) currentRotation += 360;
+    if (currentRotation >= 360) currentRotation -= 360;
+
+    // Reload the PDF with the updated rotation
+    renderPDF(pdfBuffer, currentRotation);
+}
+
+
+
+// Update the renderPDF function
+function renderPDF(data, rotation) {
+    pdfjsLib.getDocument(data).promise.then(pdf => {
+        pdf.getPage(1).then(page => {
+            const scale = 1.5;
+            const viewport = page.getViewport({ scale, rotation });
+
+            // Clear the canvas before rendering
+            ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+
+            pdfCanvas.width = viewport.width;
+            pdfCanvas.height = viewport.height;
+
+            const renderContext = {
+                canvasContext: ctx,
+                viewport: viewport
+            };
+
+            page.render(renderContext).promise.then(async () => {
+                const canvasDataURL = pdfCanvas.toDataURL('image/jpeg');
+                const byteArray = atob(canvasDataURL.split(',')[1]);
+                const array = new Uint8Array(byteArray.length);
+                for (let i = 0; i < byteArray.length; i++) {
+                    array[i] = byteArray.charCodeAt(i);
+                }
+
+                // Create a Blob containing the PDF data
+                const blob = new Blob([array], { type: 'application/pdf' });
+
+                // Create a URL for the Blob
+                const url = URL.createObjectURL(blob);
+
+                // Set the download button's href and display it
+                downloadRotatedButton.href = url;
+                downloadRotatedButton.style.display = 'block'; // Show the download button
+            });
+        });
+    });
+}
+
+
+
+
+
+        function startCrop() {
+            isCropping = true;
+        }
+
+        function handleCropSelection() {
+            const x = startX;
+            const y = startY;
+            const width = endX - startX;
+            const height = endY - startY;
+
+            // Create a new canvas for the cropped area
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext('2d');
+
+            // Draw the cropped area from the original PDF canvas
+            context.drawImage(pdfCanvas, x, y, width, height, 0, 0, width, height);
+
+            // Convert the cropped canvas to a data URL
+            const croppedDataURL = canvas.toDataURL('image/jpeg');
+
+            // Create a new jsPDF instance for the cropped PDF
+            const croppedPDF = new jsPDF('p', 'pt', [width, height]);
+
+            // Add the cropped image to the jsPDF document
+            croppedPDF.addImage(croppedDataURL, 'JPEG', 0, 0, width, height);
+
+            // Generate the cropped PDF as a data URI
+            const croppedPdfDataUri = croppedPDF.output('datauristring');
+
+            // Update the PDF canvas with the cropped content
+            const croppedImage = new Image();
+            croppedImage.src = croppedPdfDataUri;
+            croppedImage.onload = function () {
+                pdfCanvas.width = width;
+                pdfCanvas.height = height;
+                ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+                ctx.drawImage(croppedImage, 0, 0, width, height);
+            };
+
+            // Show the download button for the cropped PDF
+            downloadButton.href = croppedPdfDataUri;
+            downloadButton.style.display = 'block';
+        }
+    </script>
+</body>
+</html> -->
+
+
+
+
+
+
+
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <title>PDF Manipulation</title>
+    <style>
+        #pdfCanvas {
+            border: 2px solid black;
+        }
+        #selection-box {
+            border: 2px dashed red;
+            position: absolute;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF Manipulation</h1>
+    
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="pdfFile" id="pdfInput" accept=".pdf">
+        <button type="submit">Upload</button>
+    </form>
+
+    <canvas id="pdfCanvas"></canvas>
+    <button id="rotateLeftButton">Rotate Left</button>
+    <button id="rotateRightButton">Rotate Right</button>
+    <button id="cropButton">Crop PDF</button>
+    <div id="selection-box"></div>
+    <a id="downloadButton" style="display: none;" download="cropped.pdf" href="#"><button>Download Cropped PDF</button></a>
+    <a id="downloadRotatedButton" style="display: none;" download="rotated.pdf" href="#"><button>Download Rotated PDF</button></a>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/1.3.2/jspdf.debug.js"></script>
+    <script>
+        const pdfInput = document.getElementById('pdfInput');
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const cropButton = document.getElementById('cropButton');
+        const rotateLeftButton = document.getElementById('rotateLeftButton');
+        const rotateRightButton = document.getElementById('rotateRightButton');
+        const selectionBox = document.getElementById('selection-box');
+        const downloadButton = document.getElementById('downloadButton');
+        const downloadRotatedButton = document.getElementById('downloadRotatedButton');
+        const ctx = pdfCanvas.getContext('2d');
+        let pdfFile = null;
+        
+        let isSelecting = false;
+        let isCropping = false;
+        let startX, startY, endX, endY;
+        let pdfBuffer = null;
+        let currentRotation = 0;
+
+        // Listen for the user's choice (Rotate or Crop)
+        rotateLeftButton.addEventListener('click', () => {
+            currentRotation -= 90;
+            if (currentRotation < 0) currentRotation = 270;
+            renderPDF(pdfBuffer, currentRotation);
+        });
+
+        rotateRightButton.addEventListener('click', () => {
+            currentRotation += 90;
+            if (currentRotation >= 360) currentRotation = 0;
+            renderPDF(pdfBuffer, currentRotation);
+        });
+
+        cropButton.addEventListener('click', () => {
+            startCrop();
+        });
+
+        pdfInput.addEventListener('change', handleFileSelect);
+
+        pdfCanvas.addEventListener('mousedown', (e) => {
+            if (isCropping && !isSelecting) {
+                isSelecting = true;
+                const rect = pdfCanvas.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+                selectionBox.style.left = startX + 'px';
+                selectionBox.style.top = startY + 'px';
+                selectionBox.style.width = '0px';
+                selectionBox.style.height = '0px';
+                selectionBox.style.display = 'block'; // Ensure the selection box is displayed
+            }
+        });
+
+        pdfCanvas.addEventListener('mousemove', (e) => {
+            if (isCropping && isSelecting) {
+                const rect = pdfCanvas.getBoundingClientRect();
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+                selectionBox.style.width = (endX - startX) + 'px';
+                selectionBox.style.height = (endY - startY) + 'px';
+            }
+        });
+
+        pdfCanvas.addEventListener('mouseup', () => {
+            if (isCropping && isSelecting) {
+                isSelecting = false;
+                handleCropSelection();
+            }
+        });
+
+        function handleFileSelect(event) {
+            pdfFile = event.target.files[0];
+            const reader = new FileReader();
+        
+            reader.onload = function(e) {
+                pdfBuffer = new Uint8Array(e.target.result);
+                renderPDF(pdfBuffer, currentRotation);
+            };
+        
+            reader.readAsArrayBuffer(pdfFile);
+        }
+
+        function rotatePDF(degrees) {
+            if (!pdfBuffer) {
+                alert('No PDF loaded.');
+                return;
+            }
+
+            // Update the currentRotation
+            currentRotation += degrees;
+            if (currentRotation < 0) currentRotation += 360;
+            if (currentRotation >= 360) currentRotation -= 360;
+
+            // Reload the PDF with the updated rotation
+            renderPDF(pdfBuffer, currentRotation);
+        }
+
+        // Update the renderPDF function
+        function renderPDF(data, rotation) {
+            pdfjsLib.getDocument(data).promise.then(pdf => {
+                pdf.getPage(1).then(page => {
+                    const scale = 1.5;
+                    const viewport = page.getViewport({ scale, rotation });
+
+                    // Clear the canvas before rendering
+                    ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+
+                    pdfCanvas.width = viewport.width;
+                    pdfCanvas.height = viewport.height;
+
+                    const renderContext = {
+                        canvasContext: ctx,
+                        viewport: viewport
+                    };
+
+                    page.render(renderContext).promise.then(async () => {
+                        const canvasDataURL = pdfCanvas.toDataURL('image/jpeg');
+                        const byteArray = atob(canvasDataURL.split(',')[1]);
+                        const array = new Uint8Array(byteArray.length);
+                        for (let i = 0; i < byteArray.length; i++) {
+                            array[i] = byteArray.charCodeAt(i);
+                        }
+
+                        // Create a Blob containing the PDF data
+                        const blob = new Blob([array], { type: 'application/pdf' });
+
+                        // Create a URL for the Blob
+                        const url = URL.createObjectURL(blob);
+
+                        // Set the download button's href and display it
+                        downloadRotatedButton.href = url;
+                        downloadRotatedButton.style.display = 'block'; // Show the download button
+                    });
+                });
+            });
+        }
+
+        function startCrop() {
+            isCropping = true;
+        }
+
+        function handleCropSelection() {
+            const x = startX;
+            const y = startY;
+            const width = endX - startX;
+            const height = endY - startY;
+
+            // Create a new canvas for the cropped area
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext('2d');
+
+            // Draw the cropped area from the original PDF canvas
+            context.drawImage(pdfCanvas, x, y, width, height, 0, 0, width, height);
+
+            // Convert the cropped canvas to a data URL
+            const croppedDataURL = canvas.toDataURL('image/jpeg');
+
+            // Create a new jsPDF instance for the cropped PDF
+            const croppedPDF = new jsPDF('p', 'pt', [width, height]);
+
+            // Add the cropped image to the jsPDF document
+            croppedPDF.addImage(croppedDataURL, 'JPEG', 0, 0, width, height);
+
+            // Generate the cropped PDF as a data URI
+            const croppedPdfDataUri = croppedPDF.output('datauristring');
+
+            // Update the PDF canvas with the cropped content
+            const croppedImage = new Image();
+            croppedImage.src = croppedPdfDataUri;
+            croppedImage.onload = function () {
+                pdfCanvas.width = width;
+                pdfCanvas.height = height;
+                ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+                ctx.drawImage(croppedImage, 0, 0, width, height);
+            };
+
+            // Show the download button for the cropped PDF
+            downloadButton.href = croppedPdfDataUri;
+            downloadButton.style.display = 'block';
+        }
+        
+        // Add an event listener for the "Download Rotated PDF" button
+        downloadRotatedButton.addEventListener('click', () => {
+            const degree = currentRotation; // Get the current rotation degree
+            const downloadRotatedButtonHref = `/get-rotated-pdf?degree=${degree}`;
+
+            // Set the href attribute of the button to the correct URL
+            downloadRotatedButton.href = downloadRotatedButtonHref;
+        });
+    </script>
+</body>
+</html> -->
+
+
+
+    <!-- <!DOCTYPE html>
+    <html>
+    <head>
+        <title>PDF Manipulation</title>
+        <style>
+            #pdfCanvas {
+                border: 2px solid black;
+            }
+            #selection-box {
+                border: 2px dashed red;
+                position: absolute;
+                display: none;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>PDF Manipulation</h1>
+
+        <input type="file" id="pdfInput" accept=".pdf">
+        
+        <canvas id="pdfCanvas"></canvas>
+
+        <button id="rotateLeftButton" disabled>Rotate Left</button>
+        <button id="rotateRightButton" disabled>Rotate Right</button>
+        <button id="cropButton" disabled>Crop PDF</button>
+        <div id="selection-box"></div>
+        <a id="downloadButton" style="display: none;" download="cropped.pdf" href="#"><button>Download Cropped PDF</button></a>
+        <a id="downloadRotatedButton" style="display: none;"><button id="downloadRotatedPDF">Download Rotated PDF</button></a>
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/1.3.2/jspdf.debug.js"></script>
+        <script>
+            const pdfInput = document.getElementById('pdfInput');
+            const pdfCanvas = document.getElementById('pdfCanvas');
+            const cropButton = document.getElementById('cropButton');
+            const rotateLeftButton = document.getElementById('rotateLeftButton');
+            const rotateRightButton = document.getElementById('rotateRightButton');
+            const selectionBox = document.getElementById('selection-box');
+            const downloadButton = document.getElementById('downloadButton');
+            const downloadRotatedButton = document.getElementById('downloadRotatedButton');
+            const ctx = pdfCanvas.getContext('2d');
+            let pdfFile = null;
+            let pdfBuffer = null;
+            let currentRotation = 0;
+            let isSelecting = false;
+            let isCropping = false;
+            let startX, startY, endX, endY;
+
+            // Function to render the PDF on the canvas
+            function renderPDF(data, rotation) {
+                pdfjsLib.getDocument({ data: data }).promise.then(pdf => {
+                    pdf.getPage(1).then(page => {
+                        const scale = 1.5;
+                        const viewport = page.getViewport({ scale, rotation });
+
+                        // Clear the canvas before rendering
+                        ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+
+                        pdfCanvas.width = viewport.width;
+                        pdfCanvas.height = viewport.height;
+
+                        const renderContext = {
+                            canvasContext: ctx,
+                            viewport: viewport
+                        };
+
+                        page.render(renderContext).promise.then(() => {
+                            if (pdfBuffer) {
+                                updateDownloadRotatedButton(); // Update the download button
+                            }
+                        });
+                    });
+                });
+            }
+
+            // Function to update the download link for the rotated PDF
+            function updateDownloadRotatedButton() {
+                const degree = currentRotation;
+                const dataUri = pdfCanvas.toDataURL('application/pdf');
+
+                // Create a Blob from the data URI
+                const blob = dataURItoBlob(dataUri);
+
+                // Create a Blob URL
+                const blobUrl = window.URL.createObjectURL(blob);
+
+                // Set the href attribute of the button to the Blob URL
+                downloadRotatedButton.href = blobUrl;
+                downloadRotatedButton.style.display = 'block';
+
+                // Set the download attribute to specify the filename
+                downloadRotatedButton.download = 'rotated.pdf';
+            }
+
+            // Listen for the user's choice (Rotate or Crop)
+            rotateLeftButton.addEventListener('click', () => {
+                currentRotation -= 90;
+                if (currentRotation < 0) currentRotation = 270;
+                renderPDF(pdfBuffer, currentRotation);
+            });
+
+            rotateRightButton.addEventListener('click', () => {
+                currentRotation += 90;
+                if (currentRotation >= 360) currentRotation = 0;
+                renderPDF(pdfBuffer, currentRotation);
+            });
+
+            cropButton.addEventListener('click', () => {
+                startCrop();
+            });
+
+            pdfInput.addEventListener('change', handleFileSelect);
+
+            pdfCanvas.addEventListener('mousedown', (e) => {
+                if (isCropping && !isSelecting) {
+                    isSelecting = true;
+                    const rect = pdfCanvas.getBoundingClientRect();
+                    startX = e.clientX - rect.left;
+                    startY = e.clientY - rect.top;
+                    selectionBox.style.left = startX + 'px';
+                    selectionBox.style.top = startY + 'px';
+                    selectionBox.style.width = '0px';
+                    selectionBox.style.height = '0px';
+                    selectionBox.style.display = 'block'; // Ensure the selection box is displayed
+                }
+            });
+
+            pdfCanvas.addEventListener('mousemove', (e) => {
+                if (isCropping && isSelecting) {
+                    const rect = pdfCanvas.getBoundingClientRect();
+                    endX = e.clientX - rect.left;
+                    endY = e.clientY - rect.top;
+                    selectionBox.style.width = (endX - startX) + 'px';
+                    selectionBox.style.height = (endY - startY) + 'px';
+                }
+            });
+
+            pdfCanvas.addEventListener('mouseup', () => {
+                if (isCropping && isSelecting) {
+                    isSelecting = false;
+                    handleCropSelection();
+                }
+            });
+
+            function startCrop() {
+                isCropping = true;
+            }
+
+            function handleCropSelection() {
+                const x = startX;
+                const y = startY;
+                const width = endX - startX;
+                const height = endY - startY;
+
+                // Create a new canvas for the cropped area
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const context = canvas.getContext('2d');
+
+                // Draw the cropped area from the original PDF canvas
+                context.drawImage(pdfCanvas, x, y, width, height, 0, 0, width, height);
+
+                // Convert the cropped canvas to a data URL
+                const croppedDataURL = canvas.toDataURL('image/jpeg');
+
+                // Create a new jsPDF instance for the cropped PDF
+                const croppedPDF = new jsPDF('p', 'pt', [width, height]);
+
+                // Add the cropped image to the jsPDF document
+                croppedPDF.addImage(croppedDataURL, 'JPEG', 0, 0, width, height);
+
+                // Generate the cropped PDF as a data URI
+                const croppedPdfDataUri = croppedPDF.output('datauristring');
+
+                // Update the PDF canvas with the cropped content
+                const croppedImage = new Image();
+                croppedImage.src = croppedPdfDataUri;
+                croppedImage.onload = function () {
+                    pdfCanvas.width = width;
+                    pdfCanvas.height = height;
+                    ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+                    ctx.drawImage(croppedImage, 0, 0, width, height);
+                    isCropping = false;
+                };
+
+                // Show the download button for the cropped PDF
+                downloadButton.href = croppedPdfDataUri;
+                downloadButton.style.display = 'block';
+            }
+
+            function dataURItoBlob(dataURI) {
+                const byteString = atob(dataURI.split(',')[1]);
+                const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+                const ab = new ArrayBuffer(byteString.length);
+                const ia = new Uint8Array(ab);
+                for (let i = 0; i < byteString.length; i++) {
+                    ia[i] = byteString.charCodeAt(i);
+                }
+                return new Blob([ab], { type: mimeString });
+            }
+
+            function handleFileSelect(event) {
+                pdfFile = event.target.files[0];
+                const reader = new FileReader();
+
+                reader.onload = function(e) {
+                    pdfBuffer = new Uint8Array(e.target.result);
+                    renderPDF(pdfBuffer, currentRotation);
+
+                    // Enable the rotation and cropping buttons
+                    rotateLeftButton.disabled = false;
+                    rotateRightButton.disabled = false;
+                    cropButton.disabled = false;
+                };
+
+                reader.readAsArrayBuffer(pdfFile);
+            }
+        </script>
+    </body>
+    </html> -->
+
+
+
+   
+    
+
+
+
+
+
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>PDF and Image Manipulation</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.13/jspdf.plugin.autotable.min.js"></script>
+
+    <style>
+        #pdfCanvas,
+        #imageCanvas {
+            border: 2px solid black;
+        }
+
+        #pdfSelection-box,
+        #imageSelection-box {
+    border: 2px dashed blue; 
+    position: absolute;
+    display: none;
+    z-index: 2;
+}
+    </style>
+</head>
+
+<body>
+    <h1>PDF and Image Manipulation</h1>
+
+    <ul class="nav nav-tabs">
+        <li class="nav-item">
+            <a class="nav-link active" id="pdfTab" data-toggle="tab" href="#pdfPanel">PDF</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" id="imageTab" data-toggle="tab" href="#imagePanel">Image</a>
+        </li>
+    </ul>
+
+    <div class="tab-content">
+        <!-- PDF Panel -->
+        <div class="tab-pane fade show active" id="pdfPanel">
+            <input type="file" id="pdfInput" accept=".pdf">
+
+            <canvas id="pdfCanvas"></canvas>
+
+            <button id="pdfRotateLeftButton" disabled>Rotate Left</button>
+            <button id="pdfRotateRightButton" disabled>Rotate Right</button>
+            <button id="pdfCropButton" disabled>Crop PDF</button>
+            <div id="pdfSelection-box"></div>
+            <a id="pdfDownloadButton" style="display: none;" download="cropped.pdf" href="#"><button>Download Cropped PDF</button></a>
+            <a id="pdfDownloadRotatedButton" style="display: none;"><button id="pdfDownloadRotatedPDF">Download Rotated PDF</button></a>
+        </div>
+
+        <!-- Image Panel -->
+        <div class="tab-pane fade" id="imagePanel">
+            <input type="file" id="imageInput" accept="image/*">
+
+            <canvas id="imageCanvas"></canvas>
+
+            <button id="imageRotateLeftButton" disabled>Rotate Left</button>
+            <button id="imageRotateRightButton" disabled>Rotate Right</button>
+            <button id="imageCropButton" disabled>Crop Image</button>
+            <div id="imageSelection-box"></div>
+            <a id="imageDownloadButton" style="display: none;" download="cropped_image.jpg" href="#"><button>Download Cropped Image</button></a>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/1.3.2/jspdf.debug.js"></script>
+    <script>
+        console.log('Script loaded');  // Log to check if the script is loaded
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded');  // Log to check if the DOM is loaded
+
+        const pdfInput = document.getElementById('pdfInput');
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const pdfCropButton = document.getElementById('pdfCropButton');
+        const pdfRotateLeftButton = document.getElementById('pdfRotateLeftButton');
+        const pdfRotateRightButton = document.getElementById('pdfRotateRightButton');
+        const pdfSelectionBox = document.getElementById('pdfSelection-box');
+        const pdfDownloadButton = document.getElementById('pdfDownloadButton');
+        const pdfDownloadRotatedButton = document.getElementById('pdfDownloadRotatedButton');
+        const ctxPdf = pdfCanvas.getContext('2d');
+        let pdfFile = null;
+        let pdfBuffer = null;
+        let currentRotation = 0;
+        let isPdfSelecting = false;
+        let isPdfCropping = false;
+        let startX, startY, endX, endY;
+
+        const imageInput = document.getElementById('imageInput');
+        const imageCanvas = document.getElementById('imageCanvas');
+        const imageCropButton = document.getElementById('imageCropButton');
+        const imageRotateLeftButton = document.getElementById('imageRotateLeftButton');
+        const imageRotateRightButton = document.getElementById('imageRotateRightButton');
+        const imageSelectionBox = document.getElementById('imageSelection-box');
+        const imageDownloadButton = document.getElementById('imageDownloadButton');
+        const ctxImage = imageCanvas.getContext('2d');
+        let imageFile = null;
+        let isImageSelecting = false;
+        let isImageCropping = false;
+        let startXImage, startYImage, endXImage, endYImage;
+
+        pdfInput.addEventListener('change', handlePdfFileSelect);
+        imageInput.addEventListener('change', handleImageFileSelect);
+
+        pdfCanvas.addEventListener('mousedown', (e) => {
+            if (isPdfCropping && !isPdfSelecting) {
+                isPdfSelecting = true;
+                const rect = pdfCanvas.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+                pdfSelectionBox.style.left = startX + 'px';
+                pdfSelectionBox.style.top = startY + 'px';
+                pdfSelectionBox.style.width = '0px';
+                pdfSelectionBox.style.height = '0px';
+                pdfSelectionBox.style.display = 'block';
+            }
+        });
+
+        pdfCanvas.addEventListener('mousemove', (e) => {
+            if (isPdfCropping && isPdfSelecting) {
+                const rect = pdfCanvas.getBoundingClientRect();
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+                pdfSelectionBox.style.width = (endX - startX) + 'px';
+                pdfSelectionBox.style.height = (endY - startY) + 'px';
+            }
+        });
+
+        pdfCanvas.addEventListener('mouseup', () => {
+            if (isPdfCropping && isPdfSelecting) {
+                isPdfSelecting = false;
+                handlePdfCropSelection();
+            }
+        });
+
+        pdfRotateLeftButton.addEventListener('click', () => {
+            currentRotation -= 90;
+            if (currentRotation < 0) currentRotation = 270;
+            renderPdf(pdfBuffer, currentRotation);
+        });
+
+        pdfRotateRightButton.addEventListener('click', () => {
+            currentRotation += 90;
+            if (currentRotation >= 360) currentRotation = 0;
+            renderPdf(pdfBuffer, currentRotation);
+        });
+
+        pdfCropButton.addEventListener('click', () => {
+            startPdfCrop();
+        });
+
+        imageCanvas.addEventListener('mousedown', (e) => {
+    if (isImageCropping && !isImageSelecting) {
+        isImageSelecting = true;
+        const rect = imageCanvas.getBoundingClientRect();
+        startXImage = e.clientX - rect.left;
+        startYImage = e.clientY - rect.top;
+
+        imageSelectionBox.style.left = startXImage + 'px';
+        imageSelectionBox.style.top = startYImage + 'px';
+        imageSelectionBox.style.width = '0px';
+        imageSelectionBox.style.height = '0px';
+        imageSelectionBox.style.display = 'block';
+    }
+});
+
+
+
+
+imageCanvas.addEventListener('mousemove', (e) => {
+    if (isImageCropping && isImageSelecting) {
+        const rect = imageCanvas.getBoundingClientRect();
+        endXImage = e.clientX - rect.left;
+        endYImage = e.clientY - rect.top;
+
+        const width = endXImage - startXImage;
+        const height = endYImage - startYImage;
+
+        imageSelectionBox.style.left = (width > 0 ? startXImage : endXImage) + 'px';
+        imageSelectionBox.style.top = (height > 0 ? startYImage : endYImage) + 'px';
+        imageSelectionBox.style.width = Math.abs(width) + 'px';
+        imageSelectionBox.style.height = Math.abs(height) + 'px';
+    }
+});
+
+imageCanvas.addEventListener('mouseup', () => {
+    if (isImageCropping && isImageSelecting) {
+        isImageSelecting = false;
+        handleImageCropSelection();
+    }
+});
+
+
+imageRotateLeftButton.addEventListener('click', () => {
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+
+    tempCanvas.width = imageCanvas.width;
+    tempCanvas.height = imageCanvas.height;
+
+    tempCtx.drawImage(imageCanvas, 0, 0);
+
+    imageCanvas.width = imageCanvas.height;
+    imageCanvas.height = tempCanvas.width;
+    ctxImage.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+    ctxImage.translate(imageCanvas.width, 0);
+    ctxImage.rotate((90 * Math.PI) / 180);
+    ctxImage.drawImage(tempCanvas, 0, 0);
+    ctxImage.setTransform(1, 0, 0, 1, 0, 0);
+    updateImageDownloadButton();
+});
+
+imageRotateRightButton.addEventListener('click', () => {
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+
+    tempCanvas.width = imageCanvas.width;
+    tempCanvas.height = imageCanvas.height;
+
+    tempCtx.drawImage(imageCanvas, 0, 0);
+
+    imageCanvas.width = imageCanvas.height;
+    imageCanvas.height = tempCanvas.width;
+    ctxImage.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+    ctxImage.translate(0, imageCanvas.height);
+    ctxImage.rotate((-90 * Math.PI) / 180);
+    ctxImage.drawImage(tempCanvas, 0, 0);
+    ctxImage.setTransform(1, 0, 0, 1, 0, 0);
+    updateImageDownloadButton();
+});
+
+
+        imageCanvas.addEventListener('mouseup', () => {
+            if (isImageCropping && isImageSelecting) {
+                isImageSelecting = false;
+                handleImageCropSelection();
+            }
+        });
+
+        imageRotateLeftButton.addEventListener('click', () => {
+
+        });
+
+        function updateImageDownloadButton() {
+    const dataUri = imageCanvas.toDataURL('image/jpeg');
+    const blob = dataURItoBlob(dataUri);
+    const blobUrl = window.URL.createObjectURL(blob);
+
+    imageDownloadButton.href = blobUrl;
+    imageDownloadButton.style.display = 'block';
+    imageDownloadButton.download = 'cropped_image.jpg';
+}
+
+        function handlePdfFileSelect(event) {
+            pdfFile = event.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function (e) {
+                pdfBuffer = new Uint8Array(e.target.result);
+                renderPdf(pdfBuffer, currentRotation);
+
+
+                pdfRotateLeftButton.disabled = false;
+                pdfRotateRightButton.disabled = false;
+                pdfCropButton.disabled = false;
+            };
+
+            reader.readAsArrayBuffer(pdfFile);
+        }
+        function renderPdf(data, rotation) {
+    pdfjsLib.getDocument({ data: data }).promise.then(pdf => {
+        pdf.getPage(1).then(page => {
+            const scale = 1.5;
+
+            // Adjust the rotation in the viewport
+            const viewport = page.getViewport({ scale, rotation });
+
+            ctxPdf.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+
+            pdfCanvas.width = viewport.width;
+            pdfCanvas.height = viewport.height;
+
+            const renderContext = {
+                canvasContext: ctxPdf,
+                viewport: viewport
+            };
+
+            // No need for additional rotation here, as it's handled in the viewport
+
+            page.render(renderContext).promise.then(() => {
+                if (pdfBuffer) {
+                    updatePdfDownloadRotatedButton(pdf, rotation);
+                }
+            }).catch(error => {
+                console.error('Error rendering PDF page:', error);
+            });
+        }).catch(error => {
+            console.error('Error getting PDF page:', error);
+        });
+    }).catch(error => {
+        console.error('Error loading PDF document:', error);
+    });
+}
+
+
+function updatePdfDownloadRotatedButton(pdf, rotation) {
+    const degree = rotation;
+
+    // Create a temporary canvas for rotation
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+
+    // Get the first page of the PDF
+    pdf.getPage(1).then(page => {
+        const viewport = page.getViewport({ scale: 1.5, rotation });
+
+        tempCanvas.width = viewport.width;
+        tempCanvas.height = viewport.height;
+
+        // Rotate the content on the temporary canvas
+        tempCtx.translate(viewport.width / 2, viewport.height / 2);
+        tempCtx.rotate((degree * Math.PI) / 180);
+        tempCtx.translate(-viewport.width / 2, -viewport.height / 2);
+
+        // Render the PDF page onto the temporary canvas
+        const renderContext = {
+            canvasContext: tempCtx,
+            viewport: viewport,
+        };
+        page.render(renderContext).promise.then(() => {
+            // Create a data URL from the rotated content
+            const rotatedDataUri = tempCanvas.toDataURL('application/pdf');
+
+            // Create a blob and blob URL from the data URL
+            const rotatedBlob = dataURItoBlob(rotatedDataUri);
+            const rotatedBlobUrl = window.URL.createObjectURL(rotatedBlob);
+
+            // Set the download link properties
+            pdfDownloadRotatedButton.href = rotatedBlobUrl;
+            pdfDownloadRotatedButton.style.display = 'block';
+            pdfDownloadRotatedButton.download = 'rotated.pdf';
+        });
+    }).catch(error => {
+        console.error('Error getting PDF page:', error);
+    });
+}
+
+
+
+
+
+        function startPdfCrop() {
+            isPdfCropping = true;
+        }
+
+        function handlePdfCropSelection() {
+            const x = startX;
+            const y = startY;
+            const width = endX - startX;
+            const height = endY - startY;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext('2d');
+
+            context.drawImage(pdfCanvas, x, y, width, height, 0, 0, width, height);
+
+            const croppedDataURL = canvas.toDataURL('image/jpeg');
+
+            const croppedPDF = new jsPDF('p', 'pt', [width, height]);
+            croppedPDF.addImage(croppedDataURL, 'JPEG', 0, 0, width, height);
+
+            const croppedPdfDataUri = croppedPDF.output('datauristring');
+
+            const croppedImage = new Image();
+            croppedImage.src = croppedPdfDataUri;
+            croppedImage.onload = function () {
+                pdfCanvas.width = width;
+                pdfCanvas.height = height;
+                ctxPdf.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+                ctxPdf.drawImage(croppedImage, 0, 0, width, height);
+                isPdfCropping = false;
+            };
+
+            pdfDownloadButton.href = croppedPdfDataUri;
+            pdfDownloadButton.style.display = 'block';
+        }
+
+        function handleImageFileSelect(event) {
+            imageFile = event.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function (e) {
+                const img = new Image();
+                img.onload = function () {
+                    imageCanvas.width = img.width;
+                    imageCanvas.height = img.height;
+                    ctxImage.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+                    ctxImage.drawImage(img, 0, 0, img.width, img.height);
+
+                    // Enable the rotation and cropping buttons
+                    imageRotateLeftButton.disabled = false;
+                    imageRotateRightButton.disabled = false;
+                    imageCropButton.disabled = false;
+                };
+                img.src = e.target.result;
+            };
+
+            reader.readAsDataURL(imageFile);
+        }
+
+      function handleImageCropSelection() {
+    const x = Math.min(startXImage, endXImage);
+    const y = Math.min(startYImage, endYImage);
+    const width = Math.abs(endXImage - startXImage);
+    const height = Math.abs(endYImage - startYImage);
+
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+
+    tempCanvas.width = imageCanvas.width;
+    tempCanvas.height = imageCanvas.height;
+
+    tempCtx.drawImage(imageCanvas, 0, 0);
+
+    ctxImage.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+
+
+    imageCanvas.width = width;
+    imageCanvas.height = height;
+
+    ctxImage.drawImage(tempCanvas, x, y, width, height, 0, 0, width, height);
+
+    updateImageDownloadButton();
+ 
+    isImageCropping = false;
+}
+
+function startImageCrop() {
+    console.log("working");
+    isImageCropping = true;
+
+}
+        function dataURItoBlob(dataURI) {
+            const byteString = atob(dataURI.split(',')[1]);
+            const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let i = 0; i < byteString.length; i++) {
+                ia[i] = byteString.charCodeAt(i);
+            }
+            return new Blob([ab], { type: mimeString });
+        }
+
+        console.log('imageCanvas:', imageCanvas);
+
+
+    imageCanvas.addEventListener('click', function(e) {
+        startImageCrop();
+        if (isImageCropping) {
+        console.log('Click coordinates:', e.clientX, e.clientY);
+        }
+    });
+});
+    </script>
+</body>
+
+</html>
+
+
+    
+
+
+    
+
+
+    
+
+    
+    
+
+
+
+
+
+
+
+
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <title>PDF and Image Manipulation</title>
+    <style>
+        #pdfCanvas, #imageCanvas {
+            border: 2px solid black;
+        }
+        #selection-box {
+            border: 2px dashed red;
+            position: absolute;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF and Image Manipulation</h1>
+
+    <input type="file" id="fileInput" accept=".pdf, .jpg, .jpeg, .png, .bmp">
+    
+    <canvas id="pdfCanvas"></canvas>
+    <canvas id="imageCanvas" style="display: none;"></canvas>
+
+    <button id="rotateLeftButton" disabled>Rotate Left</button>
+    <button id="rotateRightButton" disabled>Rotate Right</button>
+    <button id="cropButton" disabled>Crop PDF / Image</button>
+    <div id="selection-box"></div>
+    <a id="downloadButton" style="display: none;" download="cropped.pdf" href="#"><button>Download Cropped PDF / Image</button></a>
+    <a id="downloadRotatedButton" style="display: none;" download="rotated.pdf" href="#"><button>Download Rotated PDF / Image</button></a>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/1.3.2/jspdf.debug.js"></script>
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const imageCanvas = document.getElementById('imageCanvas');
+        const cropButton = document.getElementById('cropButton');
+        const rotateLeftButton = document.getElementById('rotateLeftButton');
+        const rotateRightButton = document.getElementById('rotateRightButton');
+        const selectionBox = document.getElementById('selection-box');
+        const downloadButton = document.getElementById('downloadButton');
+        const downloadRotatedButton = document.getElementById('downloadRotatedButton');
+        const ctx = pdfCanvas.getContext('2d');
+        const imageCtx = imageCanvas.getContext('2d');
+        let file = null;
+        let fileBuffer = null;
+        let currentRotation = 0;
+        let isSelecting = false;
+        let isCropping = false;
+        let startX, startY, endX, endY;
+
+        // Function to render the PDF on the canvas
+        function renderPDF(data, rotation) {
+            pdfCanvas.style.display = 'block';
+            imageCanvas.style.display = 'none';
+
+            pdfjsLib.getDocument({ data: data }).promise.then(pdf => {
+                pdf.getPage(1).then(page => {
+                    const scale = 1.5;
+                    const viewport = page.getViewport({ scale, rotation });
+
+                    // Clear the canvas before rendering
+                    ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+
+                    pdfCanvas.width = viewport.width;
+                    pdfCanvas.height = viewport.height;
+
+                    const renderContext = {
+                        canvasContext: ctx,
+                        viewport: viewport
+                    };
+
+                    page.render(renderContext).promise.then(() => {
+                        if (fileBuffer) {
+                            updateDownloadRotatedButton(); // Update the download button
+                        }
+                    });
+                });
+            });
+        }
+
+        function updateDownloadRotatedButton() {
+    const degree = currentRotation;
+    const dataUri = pdfCanvas.toDataURL('application/pdf');
+
+    // Create a Blob from the data URI
+    const blob = dataURItoBlob(dataUri);
+
+    // Create a Blob URL
+    const blobUrl = window.URL.createObjectURL(blob);
+
+    // Set the href attribute of the button to the Blob URL
+    downloadRotatedButton.href = blobUrl;
+    downloadRotatedButton.style.display = 'block';
+
+    // Set the download attribute to specify the filename
+    downloadRotatedButton.download = 'rotated.pdf';
+}
+
+
+        // Function to render an image on the canvas
+        function renderImage(data, rotation) {
+            pdfCanvas.style.display = 'none';
+            imageCanvas.style.display = 'block';
+
+            const img = new Image();
+            img.src = `data:${file.type};base64,${data}`;
+            img.onload = () => {
+                imageCanvas.width = img.width;
+                imageCanvas.height = img.height;
+                const context = imageCtx;
+                context.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+                context.save();
+                context.translate(img.width / 2, img.height / 2);
+                context.rotate((rotation * Math.PI) / 180);
+                context.drawImage(img, -img.width / 2, -img.height / 2);
+                context.restore();
+                // Enable image rotation and cropping buttons
+                rotateLeftButton.disabled = false;
+                rotateRightButton.disabled = false;
+                cropButton.disabled = false;
+            };
+        }
+
+        // Listen for the user's choice (Rotate or Crop) for PDFs or images
+        rotateLeftButton.addEventListener('click', () => {
+            currentRotation -= 90;
+            if (currentRotation < 0) currentRotation = 270;
+            renderFile(fileBuffer, currentRotation);
+        });
+
+        rotateRightButton.addEventListener('click', () => {
+            currentRotation += 90;
+            if (currentRotation >= 360) currentRotation = 0;
+            renderFile(fileBuffer, currentRotation);
+        });
+
+        cropButton.addEventListener('click', () => {
+            startCrop();
+        });
+
+        fileInput.addEventListener('change', handleFileSelect);
+
+        pdfCanvas.addEventListener('mousedown', (e) => {
+            if (isCropping && !isSelecting) {
+                isSelecting = true;
+                const rect = pdfCanvas.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+                selectionBox.style.left = startX + 'px';
+                selectionBox.style.top = startY + 'px';
+                selectionBox.style.width = '0px';
+                selectionBox.style.height = '0px';
+                selectionBox.style.display = 'block'; // Ensure the selection box is displayed
+            }
+        });
+
+        pdfCanvas.addEventListener('mousemove', (e) => {
+            if (isCropping && isSelecting) {
+                const rect = pdfCanvas.getBoundingClientRect();
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+                selectionBox.style.width = (endX - startX) + 'px';
+                selectionBox.style.height = (endY - startY) + 'px';
+            }
+        });
+
+        pdfCanvas.addEventListener('mouseup', () => {
+            if (isCropping && isSelecting) {
+                isSelecting = false;
+                handleCropSelection();
+            }
+        });
+
+        imageCanvas.addEventListener('mousedown', (e) => {
+            if (isCropping && !isSelecting) {
+                isSelecting = true;
+                const rect = imageCanvas.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+                selectionBox.style.left = startX + 'px';
+                selectionBox.style.top = startY + 'px';
+                selectionBox.style.width = '0px';
+                selectionBox.style.height = '0px';
+                selectionBox.style.display = 'block'; // Ensure the selection box is displayed
+            }
+        });
+
+        imageCanvas.addEventListener('mousemove', (e) => {
+            if (isCropping && isSelecting) {
+                const rect = imageCanvas.getBoundingClientRect();
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+                selectionBox.style.width = (endX - startX) + 'px';
+                selectionBox.style.height = (endY - startY) + 'px';
+            }
+        });
+
+        imageCanvas.addEventListener('mouseup', () => {
+            if (isCropping && isSelecting) {
+                isSelecting = false;
+                handleCropSelection();
+            }
+        });
+
+        function startCrop() {
+            isCropping = true;
+        }
+
+        function handleCropSelection() {
+            const x = startX;
+            const y = startY;
+            const width = endX - startX;
+            const height = endY - startY;
+
+            if (file.type.startsWith('image')) {
+                // If it's an image file, crop the image
+                cropImage(x, y, width, height);
+            } else {
+                // If it's a PDF, create a cropped PDF
+                createCroppedPDF(x, y, width, height);
+            }
+        }
+
+        function cropImage(x, y, width, height) {
+            const image = new Image();
+            image.src = fileBuffer;
+            image.onload = function () {
+                imageCanvas.width = width;
+                imageCanvas.height = height;
+                imageCtx.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+                imageCtx.drawImage(image, x, y, width, height, 0, 0, width, height);
+                isCropping = false;
+            };
+            downloadButton.href = imageCanvas.toDataURL('image/jpeg');
+            downloadButton.style.display = 'block';
+        }
+
+        function createCroppedPDF(x, y, width, height) {
+            const pdfDoc = new jsPDF();
+            pdfDoc.addPage([width, height]);
+            pdfDoc.addImage(pdfCanvas.toDataURL('image/jpeg'), 'JPEG', 0, 0, width, height);
+            downloadButton.href = pdfDoc.output('datauristring');
+            downloadButton.style.display = 'block';
+        }
+
+        function dataURItoBlob(dataURI) {
+            const byteString = atob(dataURI.split(',')[1]);
+            const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let i = 0; i < byteString.length; i++) {
+                ia[i] = byteString.charCodeAt(i);
+            }
+            return new Blob([ab], { type: mimeString });
+        }
+
+        function handleFileSelect(event) {
+            file = event.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                fileBuffer = e.target.result;
+                console.log(fileBuffer)
+                renderFile(fileBuffer, currentRotation);
+
+                // Enable the rotation and cropping buttons
+                rotateLeftButton.disabled = false;
+                rotateRightButton.disabled = false;
+                cropButton.disabled = false;
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function renderFile(data, rotation) {
+            if (file.type.startsWith('image/png')) {
+                renderImage(data, rotation);
+            } else {
+                renderPDF(data, rotation);
+            }
+        }
+    </script>
+</body>
+</html> -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <title>PDF and Image Manipulation</title>
+    <style>
+        #pdfCanvas, #imageCanvas {
+            border: 2px solid black;
+        }
+        #selection-box {
+            border: 2px dashed red;
+            position: absolute;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF and Image Manipulation</h1>
+
+    <input type="file" id="fileInput" accept=".pdf, .jpg, .jpeg, .png, .bmp">
+
+    <canvas id="pdfCanvas"></canvas>
+    <canvas id="imageCanvas" style="display: none;"></canvas>
+
+    <button id="rotateLeftButton" disabled>Rotate Left</button>
+    <button id="rotateRightButton" disabled>Rotate Right</button>
+    <button id="cropButton" disabled>Crop PDF / Image</button>
+    <div id="selection-box"></div>
+    <a id="downloadButton" style="display: none;" download="cropped.pdf" href="#"><button>Download Cropped PDF / Image</button></a>
+    <a id="downloadRotatedButton" style="display: none;" download="rotated.pdf" href="#"><button>Download Rotated PDF / Image</button></a>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.3.1/jspdf.umd.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const fileInput = document.getElementById('fileInput');
+            const pdfCanvas = document.getElementById('pdfCanvas');
+            const imageCanvas = document.getElementById('imageCanvas');
+            const cropButton = document.getElementById('cropButton');
+            const rotateLeftButton = document.getElementById('rotateLeftButton');
+            const rotateRightButton = document.getElementById('rotateRightButton');
+            const selectionBox = document.getElementById('selection-box');
+            const downloadButton = document.getElementById('downloadButton');
+            const downloadRotatedButton = document.getElementById('downloadRotatedButton');
+            const ctx = pdfCanvas.getContext('2d');
+            const imageCtx = imageCanvas.getContext('2d');
+            let file = null;
+            let fileBuffer = null;
+            let currentRotation = 0;
+            let isSelecting = false;
+            let isCropping = false;
+            let startX, startY, endX, endY;
+
+            // Function to render the PDF on the canvas
+            function renderPDF(data, rotation) {
+                pdfCanvas.style.display = 'block';
+                imageCanvas.style.display = 'none';
+
+                pdfjsLib.getDocument({ data: data }).promise.then(pdf => {
+                    pdf.getPage(1).then(page => {
+                        const scale = 1.5;
+                        const viewport = page.getViewport({ scale, rotation });
+
+                        // Clear the canvas before rendering
+                        ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+
+                        pdfCanvas.width = viewport.width;
+                        pdfCanvas.height = viewport.height;
+
+                        const renderContext = {
+                            canvasContext: ctx,
+                            viewport: viewport
+                        };
+
+                        page.render(renderContext).promise.then(() => {
+                            if (fileBuffer) {
+                                updateDownloadRotatedButton(); // Update the download button
+                            }
+                        });
+                    });
+                });
+            }
+
+            function updateDownloadRotatedButton() {
+                const degree = currentRotation;
+                const dataUri = pdfCanvas.toDataURL('image/jpeg');
+
+                // Create a Blob from the data URI
+                const blob = dataURItoBlob(dataUri);
+
+                // Create a Blob URL
+                const blobUrl = window.URL.createObjectURL(blob);
+
+                // Set the href attribute of the button to the Blob URL
+                downloadRotatedButton.href = blobUrl;
+                downloadRotatedButton.style.display = 'block';
+
+                // Set the download attribute to specify the filename
+                downloadRotatedButton.download = 'rotated.pdf';
+            }
+
+            // Function to render an image on the canvas
+            function renderImage(data, rotation) {
+                pdfCanvas.style.display = 'none';
+                imageCanvas.style.display = 'block';
+
+                const img = new Image();
+                img.src = `data:${file.type};base64,${data}`;
+                img.onload = () => {
+                    imageCanvas.width = img.width;
+                    imageCanvas.height = img.height;
+                    const context = imageCtx;
+                    context.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+                    context.save();
+                    context.translate(img.width / 2, img.height / 2);
+                    context.rotate((rotation * Math.PI) / 180);
+                    context.drawImage(img, -img.width / 2, -img.height / 2);
+                    context.restore();
+                    // Enable image rotation and cropping buttons
+                    rotateLeftButton.disabled = false;
+                    rotateRightButton.disabled = false;
+                    cropButton.disabled = false;
+                };
+            }
+
+            // Listen for the user's choice (Rotate or Crop) for PDFs or images
+            rotateLeftButton.addEventListener('click', () => {
+                currentRotation -= 90;
+                if (currentRotation < 0) currentRotation = 270;
+                renderFile(fileBuffer, currentRotation);
+            });
+
+            rotateRightButton.addEventListener('click', () => {
+                currentRotation += 90;
+                if (currentRotation >= 360) currentRotation = 0;
+                renderFile(fileBuffer, currentRotation);
+            });
+
+            cropButton.addEventListener('click', () => {
+                startCrop();
+            });
+
+            fileInput.addEventListener('change', handleFileSelect);
+
+            pdfCanvas.addEventListener('mousedown', (e) => {
+                if (isCropping && !isSelecting) {
+                    isSelecting = true;
+                    const rect = pdfCanvas.getBoundingClientRect();
+                    startX = e.clientX - rect.left;
+                    startY = e.clientY - rect.top;
+                    selectionBox.style.left = startX + 'px';
+                    selectionBox.style.top = startY + 'px';
+                    selectionBox.style.width = '0px';
+                    selectionBox.style.height = '0px';
+                    selectionBox.style.display = 'block'; // Ensure the selection box is displayed
+                }
+            });
+
+            pdfCanvas.addEventListener('mousemove', (e) => {
+                if (isCropping && isSelecting) {
+                    const rect = pdfCanvas.getBoundingClientRect();
+                    endX = e.clientX - rect.left;
+                    endY = e.clientY - rect.top;
+                    selectionBox.style.width = (endX - startX) + 'px';
+                    selectionBox.style.height = (endY - startY) + 'px';
+                }
+            });
+
+            pdfCanvas.addEventListener('mouseup', () => {
+                if (isCropping && isSelecting) {
+                    isSelecting = false;
+                    handleCropSelection();
+                }
+            });
+
+            imageCanvas.addEventListener('mousedown', (e) => {
+                if (isCropping && !isSelecting) {
+                    isSelecting = true;
+                    const rect = imageCanvas.getBoundingClientRect();
+                    startX = e.clientX - rect.left;
+                    startY = e.clientY - rect.top;
+                    selectionBox.style.left = startX + 'px';
+                    selectionBox.style.top = startY + 'px';
+                    selectionBox.style.width = '0px';
+                    selectionBox.style.height = '0px';
+                    selectionBox.style.display = 'block'; // Ensure the selection box is displayed
+                }
+            });
+
+            imageCanvas.addEventListener('mousemove', (e) => {
+                if (isCropping && isSelecting) {
+                    const rect = imageCanvas.getBoundingClientRect();
+                    endX = e.clientX - rect.left;
+                    endY = e.clientY - rect.top;
+                    selectionBox.style.width = (endX - startX) + 'px';
+                    selectionBox.style.height = (endY - startY) + 'px';
+                }
+            });
+
+            imageCanvas.addEventListener('mouseup', () => {
+                if (isCropping && isSelecting) {
+                    isSelecting = false;
+                    handleCropSelection();
+                }
+            });
+
+            function startCrop() {
+                isCropping = true;
+            }
+
+            function handleCropSelection() {
+                const x = startX;
+                const y = startY;
+                const width = endX - startX;
+                const height = endY - startY;
+
+                if (file.type.startsWith('image')) {
+                    // If it's an image file, crop the image
+                    cropImage(x, y, width, height);
+                } else {
+                    // If it's a PDF, create a cropped PDF
+                    createCroppedPDF(x, y, width, height);
+                }
+            }
+
+            function cropImage(x, y, width, height) {
+                const image = new Image();
+                image.src = fileBuffer;
+                image.onload = function () {
+                    imageCanvas.width = width;
+                    imageCanvas.height = height;
+                    imageCtx.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+                    imageCtx.drawImage(image, x, y, width, height, 0, 0, width, height);
+                    isCropping = false;
+                };
+                downloadButton.href = imageCanvas.toDataURL('image/jpeg');
+                downloadButton.style.display = 'block';
+            }
+
+            function createCroppedPDF(x, y, width, height) {
+                const pdfDoc = new jsPDF();
+                pdfDoc.addPage([width, height]);
+                pdfDoc.addImage(pdfCanvas.toDataURL('image/jpeg'), 'JPEG', 0, 0, width, height);
+                downloadButton.href = pdfDoc.output('datauristring');
+                downloadButton.style.display = 'block';
+            }
+
+            function dataURItoBlob(dataURI) {
+                const byteString = atob(dataURI.split(',')[1]);
+                const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+                const ab = new ArrayBuffer(byteString.length);
+                const ia = new Uint8Array(ab);
+                for (let i = 0; i < byteString.length; i++) {
+                    ia[i] = byteString.charCodeAt(i);
+                }
+                return new Blob([ab], { type: mimeString });
+            }
+
+            function handleFileSelect(event) {
+                file = event.target.files[0];
+                const reader = new FileReader();
+
+                reader.onload = function (e) {
+                    // Debugging: Log the file type and data URL
+                    console.log('File Type:', file.type);
+                    console.log('Data URL:', e.target.result);
+
+                    // Ensure that the reader result is a base64 data URL
+                    if (e.target.result.startsWith('data:image')) {
+                        fileBuffer = e.target.result;
+                        renderFile(fileBuffer, currentRotation);
+
+                        // Enable the rotation and cropping buttons
+                        rotateLeftButton.disabled = false;
+                        rotateRightButton.disabled = false;
+                        cropButton.disabled = false;
+                    }
+                };
+
+                reader.readAsDataURL(file);
+            }
+
+            function renderFile(data, rotation) {
+                if (file.type.startsWith('image/png') || file.type.startsWith('image/jpeg')) {
+                    renderImage(data, rotation);
+                } else if (file.type.startsWith('application/pdf')) {
+                    renderPDF(data, rotation);
+                }
+            }
+        });
+    </script>
+</body>
+</html> -->
+
+
